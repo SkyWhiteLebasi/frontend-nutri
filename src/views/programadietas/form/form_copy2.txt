@@ -1,0 +1,501 @@
+
+import React, { useState, useEffect } from 'react';
+
+import ArgonBox from "components/ArgonBox";
+import Card from "@mui/material/Card";
+import { useNavigate, useParams } from 'react-router-dom';
+import axios from 'axios';
+
+import ArgonTypography from "components/ArgonTypography";
+import ArgonInput from "components/ArgonInput";
+import CardHeader from '@mui/material/CardHeader';
+import { Divider } from '@mui/material';
+import { styled } from '@mui/material/styles';
+import { Button, Box } from '@mui/material';
+import Autocomplete from '@mui/material/Autocomplete';
+import TextField from '@mui/material/TextField';
+import { Link } from "react-router-dom";
+import Paper from '@mui/material/Paper';
+import PropTypes from 'prop-types';
+import { autocompleteClasses } from '@mui/material/Autocomplete';
+import useMediaQuery from '@mui/material/useMediaQuery';
+import Popper from '@mui/material/Popper';
+import { useTheme } from '@mui/material/styles';
+import { VariableSizeList } from 'react-window';
+import Typography from '@mui/material/Typography';
+import { ListSubheader } from '@mui/material';
+
+
+import Grid from '@mui/material/Grid';
+
+
+
+const URI = "http://127.0.0.1:8000/api/programadietas/";
+const URI1 = "http://127.0.0.1:8000/api/preparaciones/";
+const URI2 = "http://127.0.0.1:8000/api/productos/";
+
+const Item = styled(Paper)(({ theme }) => ({
+    backgroundColor: theme.palette.mode === 'dark' ? '#1A2027' : '#fff',
+    ...theme.typography.body2,
+    padding: theme.spacing(1),
+    textAlign: 'center',
+    color: theme.palette.text.secondary,
+}));
+
+const LISTBOX_PADDING = 20; // px
+
+function renderRow(props) {
+    const { data, index, style } = props;
+    const dataSet = data[index];
+    const inlineStyle = {
+        ...style,
+        top: style.top + LISTBOX_PADDING,
+    };
+
+    if (dataSet.hasOwnProperty('group')) {
+        return (
+            <ListSubheader key={dataSet.key} component="div" style={inlineStyle}>
+                {dataSet.group}
+            </ListSubheader>
+        );
+    }
+
+    return (
+        <Typography component="li" {...dataSet[0]} noWrap style={inlineStyle}>
+            {`#${dataSet[2] + 1} - ${dataSet[1]}`}
+        </Typography>
+    );
+}
+
+const OuterElementContext = React.createContext({});
+
+const OuterElementType = React.forwardRef((props, ref) => {
+    const outerProps = React.useContext(OuterElementContext);
+    return <div ref={ref} {...props} {...outerProps} />;
+});
+
+function useResetCache(data) {
+    const ref = React.useRef(null);
+    React.useEffect(() => {
+        if (ref.current != null) {
+            ref.current.resetAfterIndex(0, true);
+        }
+    }, [data]);
+    return ref;
+}
+
+// Adapter for react-window
+const ListboxComponent = React.forwardRef(function ListboxComponent(props, ref) {
+    const { children, ...other } = props;
+    const itemData = [];
+    children.forEach((item) => {
+        itemData.push(item);
+        itemData.push(...(item.children || []));
+    });
+
+    const theme = useTheme();
+    const smUp = useMediaQuery(theme.breakpoints.up('sm'), {
+        noSsr: true,
+    });
+    const itemCount = itemData.length;
+    const itemSize = smUp ? 26 : 38;
+
+    const getChildSize = (child) => {
+        if (child.hasOwnProperty('group')) {
+            return 48;
+        }
+
+        return itemSize;
+    };
+
+    const getHeight = () => {
+        if (itemCount > 8) {
+            return 8 * itemSize;
+        }
+        return itemData.map(getChildSize).reduce((a, b) => a + b, 0);
+    };
+
+    const gridRef = useResetCache(itemCount);
+
+    return (
+        <div ref={ref}>
+            <OuterElementContext.Provider value={other}>
+                <VariableSizeList
+                    itemData={itemData}
+                    height={getHeight() + 2 * LISTBOX_PADDING}
+                    width="100%"
+                    ref={gridRef}
+                    outerElementType={OuterElementType}
+                    innerElementType="ul"
+                    itemSize={(index) => getChildSize(itemData[index])}
+                    overscanCount={5}
+                    itemCount={itemCount}
+                >
+                    {renderRow}
+                </VariableSizeList>
+            </OuterElementContext.Provider>
+        </div>
+    );
+});
+
+ListboxComponent.propTypes = {
+    children: PropTypes.node,
+};
+
+
+const StyledPopper = styled(Popper)({
+    [`& .${autocompleteClasses.listbox}`]: {
+        boxSizing: 'border-box',
+        '& ul': {
+            padding: 0,
+            margin: 0,
+        },
+    },
+});
+
+
+const Form = () => {
+
+    // Function to get the dates for each day of the week
+    const getNextWeekDates = () => {
+        const today = new Date();
+        const currentDayOfWeek = today.getDay();
+        const nextWeekDates = [];
+        for (let i = 0; i < 7; i++) {
+            const nextDate = new Date(today);
+            nextDate.setDate(today.getDate() + (i + (7 - currentDayOfWeek)) % 7);
+            nextWeekDates.push(nextDate.toISOString().split('T')[0]);
+        }
+        return nextWeekDates;
+    };
+
+
+
+    const navigate = useNavigate();
+    const daysOfWeek = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+
+    const [programaciones, setProgramaciones] = useState(getNextWeekDates().map((date) => ({
+        fecha_programa: date,
+        desayuno: '',
+        almuerzo: '',
+        hipoglucido: '',
+        hipopurinico: '',
+        pure: '',
+        vegetariano: '',
+        comida: '',
+        hipoglucido_2: '',
+        hipopurinico_2: '',
+        pure_2: '',
+    })));
+    const [desayunoSeleccionado, setDesayunoSeleccionado] = useState([]);
+
+    const [idPreparacion, setIdPreparacion] = useState([]);
+    const [preparaciones, setPreparaciones] = useState([]);
+
+    useEffect(() => {
+
+        getPreparaciones();
+        // if (id) {
+        //     obtenerPrograma();
+        // }
+    }, []);
+
+    const getPreparaciones = async () => {
+        const response = await axios.get(URI1)
+        setPreparaciones(response.data)
+    }
+
+    const handleSubmit = async (event) => {
+        try {
+            event.preventDefault();
+
+            for (let i = 0; i < programaciones.length; i++) {
+                const programacion = programaciones[i];
+                programacion.desayuno = desayunoSeleccionado.join(', '); // Actualiza el campo desayuno
+                const response = await axios.post(URI, {
+                    fecha_programa: programacion.fecha_programa,
+                    desayuno: programacion.desayuno,
+                    almuerzo: programacion.almuerzo,
+                    hipoglucido: programacion.hipoglucido,
+                    hipopurinico: programacion.hipopurinico,
+                    pure: programacion.pure,
+                    vegetariano: programacion.vegetariano,
+                    comida: programacion.comida,
+                    hipoglucido_2: programacion.hipoglucido_2,
+                    hipopurinico_2: programacion.hipopurinico_2,
+                    pure_2: programacion.pure_2,
+                });
+
+
+            }
+
+            navigate('/programadietas');
+
+        } catch (error) {
+            console.error(error);
+        }
+    };
+
+    // const handleInputChange = (index, fieldName, value) => {
+    //     const updatedProgramaciones = [...programaciones];
+    //     updatedProgramaciones[index] = {
+    //         ...updatedProgramaciones[index],
+    //         [fieldName]: value
+    //     };
+    //     setProgramaciones(updatedProgramaciones);
+    // };
+
+    // const handleInputChange = (index, fieldName, value) => {
+    //     const updatedProgramaciones = [...programaciones];
+    //     if (fieldName === 'desayuno') {
+    //         updatedProgramaciones[index].desayuno = value; // Actualiza el valor de desayuno directamente
+    //         updatedProgramaciones[index].preparacionesSeleccionadas = idPreparacion; // Actualiza el array de preparaciones seleccionadas
+    //     } else {
+    //         updatedProgramaciones[index] = {
+    //             ...updatedProgramaciones[index],
+    //             [fieldName]: value
+    //         };
+    //     }
+    //     setProgramaciones(updatedProgramaciones);
+    // };
+
+    const handleInputChange = (index, fieldName, value) => {
+        const updatedProgramaciones = [...programaciones];
+        if (fieldName === 'desayuno') {
+            updatedProgramaciones[index].desayuno = value;
+            setDesayunoSeleccionado(value);
+        } else {
+            updatedProgramaciones[index] = {
+                ...updatedProgramaciones[index],
+                [fieldName]: value
+            };
+        }
+        setProgramaciones(updatedProgramaciones);
+    };
+
+    // const handleAddCampo = () => {
+    //     setProgramaciones([...programaciones, { fecha_programa: '', desayuno: '', comedor: '', hp: '', refresco: '', almuerzo: '', comida: '' }]);
+    // };
+
+    const CustomButton = styled(Button)(({ theme }) => ({
+        '&:hover': {
+            backgroundColor: 'green',
+        },
+    }));
+
+    return (
+        <div style={{ justifyContent: 'center' }}>
+            <Card variant="h2" align="center" >
+                <CardHeader
+                    title="PROGRAMACIÓN DE MENUS - DIETAS"
+                />
+                <Divider sx={{ my: -1.5, backgroundColor: 'lightdark', height: 8 }} />
+                <br />
+                <form onSubmit={handleSubmit}>
+                    <Grid container spacing={1}>
+                        {programaciones.map((programacion, index) => (
+                            <Grid item xs={12} md={6} lg={1.7} key={index}>
+                                <Item>
+                                    <Typography variant="h6" color="text.primary" gutterBottom>
+                                        {daysOfWeek[index]}
+                                    </Typography>
+                                    <ArgonInput
+                                        type="date"
+                                        value={programacion.fecha_programa}
+                                        onChange={(event) => handleInputChange(index, 'fecha_programa', event.target.value)}
+                                    />
+
+                                    <Typography variant="h6" color="text.primary" gutterBottom>
+                                        Desayuno
+                                        {/* Desayuno {index + 1}: */}
+                                    </Typography>
+                                    {/* <ArgonInput
+                                        // required
+                                        value={programacion.desayuno}
+                                        onChange={(event) => handleInputChange(index, 'desayuno', event.target.value)}
+                                    /> */}
+                                    <Autocomplete
+                                        multiple
+                                        value={programacion.desayuno
+                                            ? preparaciones.filter((option) => desayunoSeleccionado.includes(option.nombre_preparacion))
+                                            : []}
+                                        onChange={(event, newValues) => {
+                                            const newSelectedIds = newValues.map((newValue) => newValue.nombre_preparacion);
+                                            setDesayunoSeleccionado(newSelectedIds); // Actualiza las preparaciones seleccionadas en desayuno
+                                            handleInputChange(index, 'desayuno', newSelectedIds);
+                                        }}
+                                        disablePortal
+                                        sx={{ width: '100%', height: '100%' }}
+                                        disableListWrap
+                                        PopperComponent={StyledPopper}
+                                        ListboxComponent={ListboxComponent}
+                                        options={preparaciones}
+                                        getOptionLabel={(option) => option.nombre_preparacion}
+                                        renderInput={(params) => <TextField {...params} />}
+                                        renderOption={(props, option, state) => [props, option.nombre_preparacion, state.index]}
+                                        renderGroup={(params) => (
+                                            <li {...params}>
+                                                <strong>{params.key}</strong>
+                                            </li>
+                                        )}
+                                    />
+
+                                    <Typography variant="h6" color="text.primary" gutterBottom>
+                                        Almuerzo
+                                        {/* Desayuno {index + 1}: */}
+                                    </Typography>
+                                    <ArgonInput
+                                        // required
+                                        value={programacion.almuerzo}
+                                        onChange={(event) => handleInputChange(index, 'almuerzo', event.target.value)}
+                                    />
+                                    <Typography variant="h6" color="text.primary" gutterBottom>
+                                        Hipoglucido
+                                        {/* Desayuno {index + 1}: */}
+                                    </Typography>
+                                    <ArgonInput
+                                        // required
+                                        value={programacion.hipoglucido}
+                                        onChange={(event) => handleInputChange(index, 'hipoglucido', event.target.value)}
+                                    />
+
+                                    <Typography variant="h6" color="text.primary" gutterBottom>
+                                        Hipopurinico
+                                    </Typography>
+                                    <ArgonInput
+                                        // required
+                                        value={programacion.hipopurinico}
+                                        onChange={(event) => handleInputChange(index, 'hipopurinico', event.target.value)}
+                                    />
+
+                                    <Typography variant="h6" color="text.primary" gutterBottom>
+                                        Pure
+                                    </Typography>
+                                    <ArgonInput
+                                        // required
+                                        value={programacion.pure}
+                                        onChange={(event) => handleInputChange(index, 'pure', event.target.value)}
+                                    />
+
+                                    <Typography variant="h6" color="text.primary" gutterBottom>
+                                        Vegetariano
+                                    </Typography>
+                                    <ArgonInput
+                                        type="text"
+                                        value={programacion.vegetariano}
+                                        onChange={(event) => handleInputChange(index, 'vegetariano', event.target.value)}
+                                    />
+
+                                    <Typography variant="h6" color="text.primary" gutterBottom>
+                                        Comida
+                                    </Typography>
+                                    <ArgonInput
+                                        // required
+                                        value={programacion.comida}
+                                        onChange={(event) => handleInputChange(index, 'comida', event.target.value)}
+                                    />
+
+                                    <Typography variant="h6" color="text.primary" gutterBottom>
+                                        Hipoglucido 2
+                                    </Typography>
+                                    <ArgonInput
+                                        // required
+                                        value={programacion.hipoglucido_2}
+                                        onChange={(event) => handleInputChange(index, 'hipoglucido_2', event.target.value)}
+                                    />
+
+                                    <Typography variant="h6" color="text.primary" gutterBottom>
+                                        Hipopurinico 2
+                                    </Typography>
+                                    <ArgonInput
+                                        // required
+                                        value={programacion.hipopurinico_2}
+                                        onChange={(event) => handleInputChange(index, 'hipopurinico_2', event.target.value)}
+                                    />
+
+                                    <Typography variant="h6" color="text.primary" gutterBottom>
+                                        Pure 2
+                                    </Typography>
+                                    <ArgonInput
+                                        // required
+                                        value={programacion.pure_2}
+                                        onChange={(event) => handleInputChange(index, 'pure_2', event.target.value)}
+                                    />
+                                </Item>
+
+                            </Grid>
+                        ))}
+                    </Grid>
+                    <div style={{ display: 'flex', justifyContent: 'center', marginTop: 20, marginBottom: 10 }}>
+                        <CustomButton
+                            px={1}
+                            type="submit"
+                            variant="contained"
+                            sx={{
+                                'color': {
+                                    background: '#f2762e',
+                                    color: 'white',
+                                    width: '25%',
+                                    display: 'flex',
+                                    justifyContent: 'center',
+                                },
+                                '&:hover': {
+                                    backgroundColor: '#d25c26',
+                                },
+                                marginRight: '10px'
+                            }}
+                            fullWidth
+                        >
+                            Guardar
+                        </CustomButton>
+                        {/* <CustomButton
+                            px={1}
+                            type="button"
+                            variant="contained"
+                            sx={{
+                                'color': {
+                                    background: '#058bbe',
+                                    color: 'white',
+                                    width: '25%',
+                                    display: 'flex',
+                                    justifyContent: 'center',
+                                },
+                                '&:hover': {
+                                    backgroundColor: '#0a7eb4',
+                                },
+                            }}
+                            onClick={handleAddCampo}
+                            fullWidth
+                        >
+                            Agregar
+                        </CustomButton> */}
+                        <CustomButton
+                            px={1}
+                            type="submit"
+                            variant="contained"
+                            sx={{
+                                'color': {
+                                    background: '#058bbe',
+                                    color: 'white',
+                                    width: '25%',
+                                    display: 'flex',
+                                    justifyContent: 'center',
+                                },
+                                '&:hover': {
+                                    backgroundColor: '#0a7eb4',
+                                },
+                            }}
+                            fullWidth
+                        >
+                            <Link to={'/programadietas'} style={{ color: 'white' }}>
+                                Cancelar
+                            </Link>
+                        </CustomButton>
+                    </div>
+                </form>
+            </Card>
+        </div>
+    );
+};
+
+export default Form;
